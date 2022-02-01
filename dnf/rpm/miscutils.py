@@ -35,12 +35,15 @@ def _find_rpmkeys_binary():
 
 def _process_rpm_output(data):
     # No signatures or digests = corrupt package.
-    # There is at least one line for -: and another (empty) entry after the
+    # There may be one line for `{fname}:` and another (empty) entry after the
     # last newline.
-    if len(data) < 3 or data[0] != b'-:' or data[-1]:
+    # If the first line end with `:`, this is the filename, strip it.
+    if data[0][-1] == ord(b':'):
+        data = data[1:]
+    if len(data) < 2 or data[-1]:
         return 2
     seen_sig, missing_key, not_trusted, not_signed = False, False, False, False
-    for i in data[1:-1]:
+    for i in data[:-1]:
         if b': BAD' in i:
             return 2
         elif i.endswith(b': NOKEY'):
@@ -70,7 +73,7 @@ def _verifyPackageUsingRpmkeys(package, installroot):
     # "--define=_pkgverify_flags 0x0" ensures that all signatures are checked.
     args = ('rpmkeys', '--checksig', '--root', installroot, '--verbose',
             '--define=_pkgverify_level signature', '--define=_pkgverify_flags 0x0',
-            '-')
+            '--', package)
     env = dict(os.environ)
     env['LC_ALL'] = 'C'
     with subprocess.Popen(
@@ -78,8 +81,7 @@ def _verifyPackageUsingRpmkeys(package, installroot):
             executable=rpmkeys_binary,
             env=env,
             stdout=subprocess.PIPE,
-            cwd='/',
-            stdin=package) as p:
+            cwd='/') as p:
         data = p.communicate()[0]
     returncode = p.returncode
     if type(returncode) is not int:
@@ -101,9 +103,4 @@ def checkSig(ts, package):
     return 3 if the key is not trusted
     return 4 if the pkg is not gpg or pgp signed"""
 
-    fdno = os.open(package, os.O_RDONLY|os.O_NOCTTY|os.O_CLOEXEC)
-    try:
-        value = _verifyPackageUsingRpmkeys(fdno, ts.ts.rootDir)
-    finally:
-        os.close(fdno)
-    return value
+    return _verifyPackageUsingRpmkeys(package, ts.ts.rootDir)
